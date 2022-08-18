@@ -1,0 +1,3 @@
+这部分内容涉及到使用多进程/线程进行对模型的训练，然而在Windows系统下，本模型的支持及其不完善，为了便于利用
+模块multiproccessing进行多进程模型训练实验，，本章的所有内容均在基于个人的Google账号下的Colab免费环境中进
+行。代码网址如下          https://colab.research.google.com/drive/12dL7ZiB13tViRCd1szqQYttklXo6-aGO

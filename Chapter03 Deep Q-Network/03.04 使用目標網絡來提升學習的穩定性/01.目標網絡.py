@@ -1,0 +1,106 @@
+import torch
+import copy
+from collections import deque
+from Gridworld import Gridworld
+import numpy as np
+import random
+import matplotlib.pyplot as plt
+
+L1 = 64
+L2 = 150
+L3 = 100
+L4 = 4
+
+model = torch.nn.Sequential(
+    torch.nn.Linear(L1,L2),
+    torch.nn.ReLU(),
+    torch.nn.Linear(L2,L3),
+    torch.nn.ReLU(),
+    torch.nn.Linear(L3,L4)
+)
+
+model2 = copy.deepcopy(model) # 完整複製主要Q網絡的架構，產生目標網路
+model2.load_state_dict(model.state_dict()) # 將主要Q網絡的參數賦值給目標網絡
+loss_fn = torch.nn.MSELoss()
+learning_rate = 1e-3
+optimizer = torch.optim.Adam(model.parameters(),lr=learning_rate)
+
+gamma = 0.9
+epsilon = 1.0
+
+epochs = 5000
+losses = []
+mem_size = 1000 # 設定記憶串列的大小
+batch_size = 200 # 設定批次的大小
+replay = deque(maxlen=mem_size)
+max_moves = 50
+sync_freq = 500 # 設定Q網路和目標網絡的參數同步頻率(每500steps就同步一次參數)
+j = 0 # 記錄當前訓練次數
+action_set = {
+    0: 'u',
+    1: 'd',
+    2: 'l',
+    3: 'r'
+}
+
+for i in range(epochs):
+    game = Gridworld(size=4,mode="random")
+    state1_ = game.board.render_np().reshape(1,64) + np.random.rand(1,64)/100.0
+    state1 = torch.from_numpy(state1_).float()
+    status = 1
+    mov = 0
+    while(status == 1):
+        j += 1 # 將訓練次數加一
+        mov += 1
+        qval = model(state1)
+        qval_ = qval.data.numpy()
+        if (random.random() < epsilon):
+            action_ = np.random.randint(0,4)
+        else:
+            action_ = np.argmax(qval_)
+        action = action_set[action_]
+        game.makeMove(action)
+
+        state2_ = game.board.render_np().reshape(1,64) + np.random.rand(1,64)/100.0
+        state2 = torch.from_numpy(state2_).float()
+        reward = game.reward()
+        done = True if reward > 0 else False
+        exp = (state1,action_,reward,state2,done)
+        replay.append(exp)
+        state1 = state2
+
+        if len(replay) > batch_size:
+            mini_batch = random.sample(replay,batch_size)
+
+            state1_batch = torch.cat([s1 for (s1,a,r,s2,d) in mini_batch])
+            action_batch = torch.Tensor([a for (s1,a,r,s2,d) in mini_batch])
+            reward_batch = torch.Tensor([r for (s1,a,r,s2,d) in mini_batch])
+            state2_batch = torch.cat([s2 for (s1,a,r,s2,d) in mini_batch])
+            done_batch = torch.Tensor([d for (s1,a,r,s2,d) in mini_batch])
+
+            Q1 = model(state1_batch)
+            with torch.no_grad(): # 用目標網絡計算目標Q值，但不要優化計算模型的參數
+                Q2 = model2(state2_batch)
+            Y = reward_batch + gamma*((1-done_batch)*torch.max(Q2,dim=1)[0])
+            X = Q1.gather(dim=1,index=action_batch.long().unsqueeze(dim=1)).squeeze()
+
+            loss = loss_fn(X,Y.detach())
+            print(i,"\t",loss.item())
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+            losses.append(loss.item())
+            if j % sync_freq == 0:
+                model2.load_state_dict(model.state_dict()) # 每500步，就將Q網路當前的參數複製一份給目標網路
+        if reward != -1 or mov > max_moves:
+            status = 0
+            mov = 0
+    if epsilon > 0.1:
+        epsilon -= (1/epochs) # 讓ε的值隨著訓練的進行而慢慢下降，直到0.1(還是要保留探索的動作)
+losses = np.array(losses)
+
+plt.figure(figsize=(10,7))
+plt.plot(losses)
+plt.xlabel("Epochs",fontsize=11)
+plt.ylabel("Loss",fontsize=11)
+plt.show()
